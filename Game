@@ -1,0 +1,152 @@
+<!DOCTYPE html>
+<html lang="zh-TW">
+<head>
+<base target="_top">
+<meta charset="utf-8">
+<meta name="viewport" content="width=device-width, initial-scale=1">
+<title>猜數字版本三｜雲端紀錄</title>
+<style>
+  :root{--bg:#f5f7fb;--card:#fff;--ink:#1e2a3a;--sub:#6b7a90;--main:#2f6fed;--ok:#1f9d63;--bad:#d64545;--line:#e2e8f0}
+  *{box-sizing:border-box}
+  body{margin:0;font-family:"Noto Sans TC","Microsoft JhengHei",sans-serif;background:var(--bg);color:var(--ink);padding:16px}
+  .wrap{max-width:560px;margin:0 auto;display:grid;gap:14px}
+  .card{background:var(--card);border:1px solid var(--line);border-radius:12px;padding:16px}
+  h1{font-size:1.4rem;margin:0 0 4px} h2{font-size:1.05rem;margin:0 0 10px}
+  .sub{color:var(--sub);font-size:.9rem}
+  .row{display:flex;gap:8px;flex-wrap:wrap;align-items:center}
+  input[type=text]{flex:1;min-width:120px;padding:10px 12px;border:1px solid var(--line);border-radius:8px;font-size:1.1rem}
+  input.guess{letter-spacing:.4em;text-align:center;font-size:1.4rem}
+  button{padding:10px 16px;border:0;border-radius:8px;background:var(--main);color:#fff;font-size:1rem;cursor:pointer}
+  button.ghost{background:#eaf0fe;color:var(--main)}
+  button:disabled{opacity:.5;cursor:not-allowed}
+  button:focus-visible,input:focus-visible{outline:3px solid #9bbcff;outline-offset:1px}
+  .msg{min-height:1.4em;margin-top:8px;font-size:.95rem}
+  .msg.err{color:var(--bad)} .msg.win{color:var(--ok);font-weight:700}
+  table{width:100%;border-collapse:collapse;font-size:.95rem}
+  th,td{padding:7px 6px;border-bottom:1px solid var(--line);text-align:center}
+  th{color:var(--sub);font-weight:500}
+  .a{color:var(--ok);font-weight:700} .b{color:var(--main);font-weight:700}
+  .debug{display:none;background:#fff7e0;border:1px dashed #e0b43c;border-radius:8px;padding:8px 12px;margin-top:10px}
+  .debug.on{display:block}
+  .hist{max-height:260px;overflow:auto}
+  label.sw{display:flex;gap:6px;align-items:center;color:var(--sub);font-size:.9rem}
+</style>
+</head>
+<body>
+<div class="wrap">
+  <div class="card">
+    <h1>猜數字 版本三</h1>
+    <div class="sub">電腦想了一組四位數（數字不重複）。位置與數字都對 = A，數字對但位置錯 = B。</div>
+    <div class="row" style="margin-top:12px">
+      <input type="text" id="code" maxlength="20" placeholder="輸入你的代號" aria-label="代號">
+      <button id="start">開始新局</button>
+    </div>
+    <label class="sw" style="margin-top:10px"><input type="checkbox" id="dbg"> 除錯模式（顯示答案）</label>
+    <div class="debug" id="dbgBox">答案：<b id="dbgAns">----</b></div>
+  </div>
+
+  <div class="card" id="play" hidden>
+    <h2>第 <span id="round">1</span> 局｜已猜 <span id="cnt">0</span> 次</h2>
+    <div class="row">
+      <input type="text" class="guess" id="guess" maxlength="4" inputmode="numeric" placeholder="????" aria-label="輸入四位數">
+      <button id="go">猜！</button>
+    </div>
+    <div class="msg" id="msg" role="status"></div>
+    <table id="tbl" style="margin-top:8px">
+      <thead><tr><th>次</th><th>猜測</th><th>結果</th></tr></thead>
+      <tbody></tbody>
+    </table>
+  </div>
+
+  <div class="card">
+    <h2>雲端紀錄</h2>
+    <div class="row" style="margin-bottom:8px">
+      <button class="ghost" id="load">讀取我的紀錄</button>
+      <span class="sub" id="cloudMsg"></span>
+    </div>
+    <div class="hist"><table id="hist"><thead><tr><th>時間</th><th>答案</th><th>次數</th><th>猜中</th></tr></thead><tbody></tbody></table></div>
+  </div>
+</div>
+
+<script>
+let answer = '', guesses = [], over = true, round = 0;
+const $ = id => document.getElementById(id);
+
+function makeAnswer() {
+  const d = [0,1,2,3,4,5,6,7,8,9];
+  for (let i = d.length - 1; i > 0; i--) { const j = Math.floor(Math.random() * (i + 1)); [d[i], d[j]] = [d[j], d[i]]; }
+  return d.slice(0, 4).join('');
+}
+function judge(g, ans) {
+  let a = 0, b = 0;
+  for (let i = 0; i < 4; i++) { if (g[i] === ans[i]) a++; else if (ans.includes(g[i])) b++; }
+  return {a, b};
+}
+function say(t, cls) { const m = $('msg'); m.textContent = t; m.className = 'msg ' + (cls || ''); }
+function showDebug() { $('dbgBox').classList.toggle('on', $('dbg').checked); $('dbgAns').textContent = answer || '----'; }
+
+function startGame() {
+  const code = $('code').value.trim();
+  if (!code) { alert('請先輸入代號'); $('code').focus(); return; }
+  // 上一局還沒猜中就開新局：記為未猜中
+  if (!over && guesses.length) saveToCloud(false);
+  answer = makeAnswer(); guesses = []; over = false; round++;
+  $('play').hidden = false; $('round').textContent = round; $('cnt').textContent = 0;
+  $('tbl').tBodies[0].innerHTML = ''; $('guess').value = ''; $('go').disabled = false;
+  say(''); showDebug(); $('guess').focus();
+}
+
+function submitGuess() {
+  if (over) return;
+  const g = $('guess').value.trim();
+  if (!/^\d{4}$/.test(g)) return say('請輸入 4 位數字', 'err');
+  if (new Set(g).size < 4) return say('四個數字不能重複', 'err');
+  if (guesses.some(x => x.guess === g)) return say('這個數字猜過了', 'err');
+  const {a, b} = judge(g, answer);
+  guesses.push({guess: g, a, b});
+  const tr = document.createElement('tr');
+  tr.innerHTML = `<td>${guesses.length}</td><td>${g}</td><td><span class="a">${a}A</span> <span class="b">${b}B</span></td>`;
+  $('tbl').tBodies[0].appendChild(tr);
+  $('cnt').textContent = guesses.length; $('guess').value = '';
+  if (a === 4) {
+    over = true; $('go').disabled = true;
+    say(`答對了！答案是 ${answer}，共猜 ${guesses.length} 次`, 'win');
+    saveToCloud(true);
+  } else say('');
+}
+
+function saveToCloud(won) {
+  const snapshot = {code: $('code').value.trim(), answer, guesses: guesses.slice()};
+  $('cloudMsg').textContent = '儲存中…';
+  google.script.run
+    .withSuccessHandler(() => { $('cloudMsg').textContent = '已存到雲端'; loadHistory(); })
+    .withFailureHandler(e => { $('cloudMsg').textContent = '儲存失敗：' + e.message; })
+    .saveGame(snapshot.code, snapshot.answer, snapshot.guesses, won);
+}
+
+function loadHistory() {
+  const code = $('code').value.trim();
+  if (!code) { $('cloudMsg').textContent = '請先輸入代號'; return; }
+  $('cloudMsg').textContent = '讀取中…';
+  google.script.run
+    .withSuccessHandler(rows => {
+      const tb = $('hist').tBodies[0]; tb.innerHTML = '';
+      rows.forEach(r => {
+        const tr = document.createElement('tr'); tr.title = r.detail;
+        [r.time, r.answer, r.count, r.won].forEach(v => { const td = document.createElement('td'); td.textContent = v; tr.appendChild(td); });
+        tb.appendChild(tr);
+      });
+      $('cloudMsg').textContent = rows.length ? `共 ${rows.length} 筆` : '還沒有紀錄';
+    })
+    .withFailureHandler(e => { $('cloudMsg').textContent = '讀取失敗：' + e.message; })
+    .getHistory(code);
+}
+
+$('start').onclick = startGame;
+$('go').onclick = submitGuess;
+$('load').onclick = loadHistory;
+$('dbg').onchange = showDebug;
+$('guess').addEventListener('keydown', e => { if (e.key === 'Enter') submitGuess(); });
+</script>
+</body>
+</html>
